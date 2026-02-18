@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // "plugin": ["opencode-openai-codex-auth"],
+  // "enterprise": {
+  //   "url": "https://enterprise.dev.opencode.ai",
+  // },
+  "provider": {
+    "opencode": {
+      "options": {},
+    },
+  },
+  "mcp": {
+     "playwright": {
+      "type": "local",
+      "command": ["npx", "@playwright/mcp@latest"],
+    },
+  },
+  "tools": {
+    "github-triage": false,
+    "github-pr-search": false,
+  },
+}
