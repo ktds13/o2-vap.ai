@@ -1,5 +1,4 @@
 ---
-name: /commit
 description: Commit changes to git with an intelligent commit message
 ---
 

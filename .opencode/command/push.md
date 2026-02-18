@@ -1,5 +1,4 @@
 ---
-name: /push
 description: Push commits to remote repository
 ---
 
