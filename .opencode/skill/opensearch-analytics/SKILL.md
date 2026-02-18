@@ -54,10 +54,10 @@ const INDEX_NAME = process.env.INDEX_NAME || 'analytics-events';
 
 ```typescript
 interface AnalyticsEvent {
-  analyticsEventId: string;
-  analyticsTaskId: string;
-  analyticsServiceId: string;
-  analyticsModuleId: string; // One of the module types above
+  eventId: string;
+  taskId: string;
+  serviceId: string;
+  moduleId: string; // One of the module types above
   eventSourceId: string;      // Camera/source ID
   eventSourceType: string;
   eventDateTime: string | number;
@@ -66,9 +66,9 @@ interface AnalyticsEvent {
   media: {
     url: string;
     type: string;
-    thumbnail?: string;
+    mimeType: string;
   };
-  eventData: Record<string, any>; // Module-specific data
+  eventData: any; // Module-specific data
   verifiedBy?: string;
   verifiedDateTime?: string;
   verifiedDescription?: string;
@@ -76,6 +76,123 @@ interface AnalyticsEvent {
   eventSourceName?: string;
 }
 ```
+
+## Response Format (o2vap.management DTOs)
+
+The project includes TypeScript types matching the Go backend DTOs in `src/mcp-opensearch/types/opensearch-response.types.ts`.
+
+### Raw OpenSearch Response Structure
+
+```typescript
+interface OpensearchResponse {
+  _shards: {
+    failed: number;
+    skipped: number;
+    successful: number;
+    total: number;
+  };
+  hits: {
+    hits: SingleHit[];
+    max_score: number;
+    total: {
+      relation: string;
+      value: number;
+    };
+  };
+  timed_out: boolean;
+  took: number;
+  aggregations?: {
+    by_source: {
+      buckets: Bucket[];
+      doc_count_error_upper_bound: number;
+      sum_other_doc_count: number;
+    };
+  };
+}
+
+interface SingleHit {
+  _id: string;
+  _index: string;
+  _score: number;
+  _source: {
+    metadata: {
+      resultId: string;
+      alertId: string;
+    };
+    eventData: AnalyticsEvent;
+  };
+}
+
+interface Bucket {
+  doc_count: number;
+  key: string;
+  latest_events: {
+    hits: {
+      hits: SingleHit[];
+      // ... other hit fields
+    };
+  };
+}
+```
+
+### Formatted Response DTOs
+
+**Option 1: OpensearchResponseDTO**
+```typescript
+interface OpensearchResponseDTO {
+  totalValue: number;
+  AggsResult: Bucket[];
+  HitList: SingleHit[];
+}
+```
+
+**Option 2: AnalyticsEventResponse** (UI-friendly)
+```typescript
+interface AnalyticsEventResponse {
+  Count: number;
+  AnalyticsEvents: AnalyticsEvent[];
+  Aggregation: AnalyticsEvent[];
+}
+```
+
+### Using the Response Formatter
+
+Import and use the formatter utility from `src/mcp-opensearch/utils/response-formatter.ts`:
+
+```typescript
+import { formatOpensearchResponse } from '../utils/response-formatter';
+
+// After querying OpenSearch
+const rawResponse = await client.search({
+  index: INDEX_NAME,
+  body: { /* query */ }
+});
+
+// Format as DTO (includes buckets and hit metadata)
+const dtoResponse = formatOpensearchResponse(rawResponse.body, 'dto');
+// Returns: { totalValue, AggsResult, HitList }
+
+// Or format as Analytics Event Response (cleaner for UI)
+const analyticsResponse = formatOpensearchResponse(rawResponse.body, 'analytics');
+// Returns: { Count, AnalyticsEvents, Aggregation }
+
+// Return as JSON
+return JSON.stringify(dtoResponse, null, 2);
+```
+
+### Format Selection Guide
+
+- **Use 'dto' format** when:
+  - You need bucket information with doc counts
+  - You need the full hit metadata (_id, _index, _score)
+  - You're working with aggregation results
+  - You need to match the Go backend's OpensearchResponseDTO exactly
+
+- **Use 'analytics' format** when:
+  - You only need the event data for UI display
+  - You want a cleaner, flattened response
+  - You're separating regular events from aggregation events
+  - You want just the Count and event arrays
 
 ## Field Mappings (CRITICAL)
 
@@ -486,3 +603,152 @@ async function searchAnalyticsEvents(options: {
 **Vehicle search**: `wildcard` on `licensePlate.keyword`
 **Person tracking**: `personId` + time range for facial events
 **Loitering**: `LOITERING` module + duration filter
+
+## Complete Example with Response Formatting
+
+```typescript
+import { Client } from '@opensearch-project/opensearch';
+import { formatOpensearchResponse } from './utils/response-formatter';
+
+const client = new Client({
+  node: process.env.OPENSEARCH_URL || 'http://localhost:9200',
+  auth: {
+    username: process.env.OPENSEARCH_USER_NAME || 'admin',
+    password: process.env.OPENSEARCH_PASSWORD,
+  },
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
+
+const INDEX_NAME = process.env.INDEX_NAME || 'analytics-events';
+
+async function getCrowdEventsWithFormatting() {
+  try {
+    const response = await client.search({
+      index: INDEX_NAME,
+      body: {
+        query: {
+          bool: {
+            must: [
+              { term: { 'eventData.moduleId.keyword': 'CROWD_COUNT' } },
+              {
+                range: {
+                  'eventData.eventDateTime': {
+                    gte: '2026-02-18T00:00:00Z',
+                    lte: '2026-02-18T23:59:59Z'
+                  }
+                }
+              }
+            ]
+          }
+        },
+        sort: [{ 'eventData.eventDateTime': { order: 'desc' } }],
+        size: 10,
+        aggs: {
+          by_source: {
+            terms: {
+              field: 'eventData.eventSourceId.keyword',
+              size: 10
+            },
+            aggs: {
+              latest_events: {
+                top_hits: {
+                  size: 1,
+                  sort: [{ 'eventData.eventDateTime': { order: 'desc' } }]
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Option 1: Return DTO format (includes full hit metadata and buckets)
+    const dtoResponse = formatOpensearchResponse(response.body, 'dto');
+    console.log('DTO Format:', JSON.stringify(dtoResponse, null, 2));
+    
+    // Option 2: Return Analytics format (cleaner for UI)
+    const analyticsResponse = formatOpensearchResponse(response.body, 'analytics');
+    console.log('Analytics Format:', JSON.stringify(analyticsResponse, null, 2));
+    
+    return analyticsResponse;
+  } catch (error) {
+    console.error('Error querying OpenSearch:', error);
+    throw error;
+  }
+}
+
+// Execute
+getCrowdEventsWithFormatting();
+```
+
+### Example Output - DTO Format
+
+```json
+{
+  "totalValue": 42,
+  "AggsResult": [
+    {
+      "key": "camera-01",
+      "doc_count": 15,
+      "latest_events": {
+        "hits": {
+          "hits": [
+            {
+              "_id": "event-123",
+              "_index": "analytics-events",
+              "_score": 1.0,
+              "_source": {
+                "metadata": {
+                  "resultId": "result-123",
+                  "alertId": "alert-456"
+                },
+                "eventData": {
+                  "eventId": "evt-123",
+                  "taskId": "task-001",
+                  "moduleId": "CROWD_COUNT",
+                  "eventSourceId": "camera-01",
+                  "eventDateTime": "2026-02-18T10:30:00Z",
+                  "status": "verified",
+                  "eventData": { "count": 25 }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "HitList": [
+    /* array of SingleHit objects */
+  ]
+}
+```
+
+### Example Output - Analytics Format
+
+```json
+{
+  "Count": 42,
+  "AnalyticsEvents": [
+    {
+      "eventId": "evt-123",
+      "taskId": "task-001",
+      "moduleId": "CROWD_COUNT",
+      "eventSourceId": "camera-01",
+      "eventDateTime": "2026-02-18T10:30:00Z",
+      "status": "verified",
+      "eventData": { "count": 25 },
+      "media": {
+        "url": "https://...",
+        "type": "image",
+        "mimeType": "image/jpeg"
+      }
+    }
+  ],
+  "Aggregation": [
+    /* Latest events from each bucket */
+  ]
+}
+```
