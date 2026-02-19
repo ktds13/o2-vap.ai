@@ -12,7 +12,7 @@ Load the git-commit-push skill and help the user push their changes to the remot
 - `/push --force` - Force push (use with extreme caution)
 - `/push --set-upstream` - Push and set upstream branch
 
-## Workflow
+<!-- ## Workflow
 
 1. Load the git-commit-push skill
 2. Check for uncommitted changes
@@ -28,4 +28,4 @@ Load the git-commit-push skill and help the user push their changes to the remot
 - NEVER force push to main/master without explicit confirmation
 - If force push is requested, show a warning and confirm
 - Check for remote changes before pushing
-- Advise user to pull first if remote has changes
+- Advise user to pull first if remote has changes -->
