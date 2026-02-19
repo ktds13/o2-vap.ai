@@ -1,10 +1,9 @@
-1. Check current branch:
-     if no commits to push,
-     - Load and use git-commit-sample skill
+1. Check current branch.
+2. Load and execute git-commit-sample skill
 2. If not on main/origin branch:
    - Switch to main and pull latest changes
    - Switch back to feature branch
-   - Rebase branch onto main
+   - Rebase branch from main
    - If conflicts occur, stop and advise user to resolve
 3. Handle flags:
    - --force: Warn if pushing to main/master, require confirmation

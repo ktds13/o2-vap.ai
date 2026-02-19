@@ -1,6 +1,6 @@
 ---
 name: git-commit-sample
-description: Sample git commit skill demonstrating bb-commit style workflow for staging and committing changes
+description: Git commit workflow
 ---
 
 # Git Commit Sample Skill
