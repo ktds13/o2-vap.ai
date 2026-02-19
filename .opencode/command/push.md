@@ -1,5 +1,5 @@
 1. Check current branch.
-2. Load and execute git-commit-sample skill
+2. Execute git-commit skill
 2. If not on main/origin branch:
    - Switch to main and pull latest changes
    - Switch back to feature branch
