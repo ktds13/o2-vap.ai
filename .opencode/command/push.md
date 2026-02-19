@@ -1,6 +1,6 @@
 
-1. Load the git-commit-sample skill
-2. Check current branch
+1. Firstly, Load and execute the git-commit-sample skill
+2. Check current branch, if no commits to push, use git-commit-sample skill
 3. If not on main/origin branch:
    - Switch to main and pull latest changes
    - Switch back to feature branch
