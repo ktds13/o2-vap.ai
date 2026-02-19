@@ -1,31 +1,18 @@
----
-description: Push commits to remote repository
----
 
-# Push Command
+1. Load the git-commit-sample skill
+2. Check current branch
+3. If not on main/origin branch:
+   - Switch to main and pull latest changes
+   - Switch back to feature branch
+   - Rebase branch onto main
+   - If conflicts occur, stop and advise user to resolve
+4. Handle flags:
+   - --force: Warn if pushing to main/master, require confirmation
+   - --set-upstream: Set upstream branch with -u flag
+5. Push commits to remote repository
+6. Report success or failure
 
-Load the git-commit-push skill and help the user push their changes to the remote repository.
-
-## Usage
-
-- `/push` - Push commits to remote
-- `/push --force` - Force push (use with extreme caution)
-- `/push --set-upstream` - Push and set upstream branch
-
-<!-- ## Workflow
-
-1. Load the git-commit-push skill
-2. Check for uncommitted changes
-3. If uncommitted changes exist, ask user if they want to commit first
-4. Check for --force flag (warn if pushing to main/master)
-5. Check for --set-upstream flag to set upstream branch
-6. Execute the push workflow from the skill
-7. Report success or failure with clear messaging
-
-## Important Notes
-
-- Always follow the Git Safety Protocol from the skill
+## Safety Rules
 - NEVER force push to main/master without explicit confirmation
-- If force push is requested, show a warning and confirm
-- Check for remote changes before pushing
-- Advise user to pull first if remote has changes -->
+- Check for remote changes before pushing (advise pull if needed)
+- Warn if .gitignore files are staged or pushed
