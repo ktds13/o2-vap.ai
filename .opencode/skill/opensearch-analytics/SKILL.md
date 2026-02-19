@@ -12,55 +12,64 @@ description: Query and analyze video analytics events from OpenSearch. Use this 
 - Getting latest events from cameras or tasks
 - Investigating event history or performance metrics
 
-## Available Tool
+## How to Query
 
-This skill includes a static **opensearch-query** tool that executes OpenSearch queries directly. Use it when you need to run a query:
+Use the `execute_opensearch_query` MCP tool to query analytics events from OpenSearch. This tool accepts OpenSearch Query DSL and returns formatted results.
 
-```typescript
-// The tool automatically handles connection and formatting
-// Just provide the OpenSearch query DSL
-await tools.opensearchQuery({
-  query: {
-    query: { match_all: {} },
-    sort: [{ "eventData.eventDateTime": { order: "desc" } }],
-    size: 10
-  },
-  format: "analytics" // or "dto" or "raw"
-});
-```
+**IMPORTANT**: Always use the MCP tool instead of creating TypeScript files for queries.
 
-The tool accepts full OpenSearch Query DSL and returns formatted results. This is the preferred method for executing queries instead of writing custom scripts.
+### Using the MCP Tool
 
-**Tool Parameters:**
-- `query`: Full OpenSearch query DSL object
-- `index`: Target index name (defaults to `analytics-events`)
-- `format`: Response format - `analytics` (default), `dto`, or `raw`
+The tool is available as: `execute_opensearch_query`
 
-For complex or reusable queries, you can also write TypeScript scripts following the patterns below.
+**Parameters:**
+- `query` (object): OpenSearch Query DSL body (default: `{}` for match_all)
+- `index` (string): Index name (default: `analytics-events` from .env)
+- `format` (string): Response format - `analytics` (default), `dto`, or `raw`
 
-## OpenSearch Connection
-
-**IMPORTANT**: Always use environment variables from `.env` file for configuration.
+**Example Usage:**
 
 ```typescript
-import { Client } from '@opensearch-project/opensearch';
-
-// Environment variables are automatically loaded from .env file
-const client = new Client({
-  node: process.env.OPENSEARCH_URL || 'http://localhost:9200',
-  auth: {
-    username: process.env.OPENSEARCH_USER_NAME || 'admin',
-    password: process.env.OPENSEARCH_PASSWORD,
+// Simple query for all events from sourceId 75
+{
+  "query": {
+    "term": { "eventData.eventSourceId.keyword": "75" }
   },
-  ssl: {
-    rejectUnauthorized: false, // For dev with self-signed certs
-  },
-});
+  "sort": [{ "eventData.eventDateTime": { "order": "desc" } }],
+  "size": 100
+}
 
-const INDEX_NAME = process.env.INDEX_NAME || 'analytics-events';
+// Query with aggregations
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "term": { "eventData.moduleId.keyword": "CROWD_COUNT" } }
+      ]
+    }
+  },
+  "size": 10,
+  "aggs": {
+    "by_source": {
+      "terms": {
+        "field": "eventData.eventSourceId.keyword",
+        "size": 50
+      }
+    }
+  }
+}
 ```
 
-**Note**: The `.env` file in the project root contains all OpenSearch configuration. Never hardcode credentials in scripts.
+## Tool Connection
+
+The MCP server is configured in `.mcp.json` and automatically connects to OpenSearch using environment variables from `.env`:
+
+```env
+OPENSEARCH_URL=http://localhost:9200
+OPENSEARCH_USER_NAME=admin
+OPENSEARCH_PASSWORD=your_password_here
+INDEX_NAME=analytics-events
+```
 
 ## Analytics Modules (from o2vap.management)
 
@@ -105,74 +114,11 @@ interface AnalyticsEvent {
 
 ## Response Format (o2vap.management DTOs)
 
-The project includes TypeScript types matching the Go backend DTOs in `src/mcp-opensearch/types/opensearch-response.types.ts`.
+The MCP tool returns results in one of three formats:
 
-### Raw OpenSearch Response Structure
+### Format Options
 
-```typescript
-interface OpensearchResponse {
-  _shards: {
-    failed: number;
-    skipped: number;
-    successful: number;
-    total: number;
-  };
-  hits: {
-    hits: SingleHit[];
-    max_score: number;
-    total: {
-      relation: string;
-      value: number;
-    };
-  };
-  timed_out: boolean;
-  took: number;
-  aggregations?: {
-    by_source: {
-      buckets: Bucket[];
-      doc_count_error_upper_bound: number;
-      sum_other_doc_count: number;
-    };
-  };
-}
-
-interface SingleHit {
-  _id: string;
-  _index: string;
-  _score: number;
-  _source: {
-    metadata: {
-      resultId: string;
-      alertId: string;
-    };
-    eventData: AnalyticsEvent;
-  };
-}
-
-interface Bucket {
-  doc_count: number;
-  key: string;
-  latest_events: {
-    hits: {
-      hits: SingleHit[];
-      // ... other hit fields
-    };
-  };
-}
-```
-
-### Formatted Response DTOs
-
-**Option 1: OpensearchResponseDTO**
-```typescript
-interface OpensearchResponseDTO {
-  totalValue: number;
-  AggsResult: Bucket[];
-  HitList: SingleHit[];
-}
-```
-
-**Option 2: AnalyticsEventResponse** (UI-friendly)
+**1. Analytics Format (Default)** - `format: "analytics"`
 ```typescript
 interface AnalyticsEventResponse {
   Count: number;
@@ -181,44 +127,35 @@ interface AnalyticsEventResponse {
 }
 ```
 
-### Using the Response Formatter
-
-Import and use the formatter utility from `src/mcp-opensearch/utils/response-formatter.ts`:
-
+**2. DTO Format** - `format: "dto"`
 ```typescript
-import { formatOpensearchResponse } from '../utils/response-formatter';
-
-// After querying OpenSearch
-const rawResponse = await client.search({
-  index: INDEX_NAME,
-  body: { /* query */ }
-});
-
-// Format as DTO (includes buckets and hit metadata)
-const dtoResponse = formatOpensearchResponse(rawResponse.body, 'dto');
-// Returns: { totalValue, AggsResult, HitList }
-
-// Or format as Analytics Event Response (cleaner for UI)
-const analyticsResponse = formatOpensearchResponse(rawResponse.body, 'analytics');
-// Returns: { Count, AnalyticsEvents, Aggregation }
-
-// Return as JSON
-return JSON.stringify(dtoResponse, null, 2);
+interface OpensearchResponseDTO {
+  totalValue: number;
+  AggsResult: Bucket[];
+  HitList: SingleHit[];
+}
 ```
 
+**3. Raw Format** - `format: "raw"`
+Returns the complete OpenSearch response unchanged.
+
 ### Format Selection Guide
+
+- **Use 'analytics' format** (default) when:
+  - You only need the event data for display
+  - You want a cleaner, flattened response
+  - You're building UI components
+  - You want just the Count and event arrays
 
 - **Use 'dto' format** when:
   - You need bucket information with doc counts
   - You need the full hit metadata (_id, _index, _score)
-  - You're working with aggregation results
+  - You're working with complex aggregation results
   - You need to match the Go backend's OpensearchResponseDTO exactly
 
-- **Use 'analytics' format** when:
-  - You only need the event data for UI display
-  - You want a cleaner, flattened response
-  - You're separating regular events from aggregation events
-  - You want just the Count and event arrays
+- **Use 'raw' format** when:
+  - You need the complete OpenSearch response unchanged
+  - You're debugging queries or need all metadata
 
 ## Field Mappings (CRITICAL)
 
@@ -242,256 +179,229 @@ const FIELD_MAPPINGS = {
 
 ### 1. Search Events with Filters
 
-```typescript
-const response = await client.search({
-  index: INDEX_NAME,
-  body: {
-    query: {
-      bool: {
-        must: [
-          { term: { 'eventData.moduleId.keyword': 'FACIAL_RECOGNITION' } },
-          { 
-            range: { 
-              'eventData.eventDateTime': { 
-                gte: '2026-02-18T00:00:00Z',
-                lte: '2026-02-18T23:59:59Z'
-              } 
+```json
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "term": { "eventData.moduleId.keyword": "FACIAL_RECOGNITION" } },
+        { 
+          "range": { 
+            "eventData.eventDateTime": { 
+              "gte": "2026-02-18T00:00:00Z",
+              "lte": "2026-02-18T23:59:59Z"
             } 
-          }
-        ]
-      }
-    },
-    sort: [{ 'eventData.eventDateTime': { order: 'desc' } }],
-    from: 0,
-    size: 10
-  }
-});
-
-const events = response.body.hits.hits.map(hit => hit._source);
-```
-
-### 2. Get Event by ID
-
-```typescript
-const response = await client.search({
-  index: INDEX_NAME,
-  body: {
-    query: {
-      term: { 'eventData.analyticsEventId.keyword': eventId }
-    },
-    size: 1
-  }
-});
-
-const event = response.body.hits.hits[0]?._source;
-```
-
-### 3. Aggregate Events by Time (Time-series)
-
-```typescript
-const response = await client.search({
-  index: INDEX_NAME,
-  body: {
-    query: { match_all: {} },
-    size: 0,
-    aggs: {
-      events_over_time: {
-        date_histogram: {
-          field: 'eventData.eventDateTime',
-          calendar_interval: '1h', // or '1d', '1w', '1M'
-          format: 'yyyy-MM-dd HH:mm:ss'
+          } 
         }
+      ]
+    }
+  },
+  "sort": [{ "eventData.eventDateTime": { "order": "desc" } }],
+  "from": 0,
+  "size": 10
+}
+```
+
+### 2. Get Events by Source ID
+
+```json
+{
+  "query": {
+    "term": { "eventData.eventSourceId.keyword": "75" }
+  },
+  "sort": [{ "eventData.eventDateTime": { "order": "desc" } }],
+  "size": 100
+}
+```
+
+### 3. Get Event by ID
+
+```json
+{
+  "query": {
+    "term": { "eventData.eventId.keyword": "evt-123" }
+  },
+  "size": 1
+}
+```
+
+### 4. Aggregate Events by Time (Time-series)
+
+```json
+{
+  "query": { "match_all": {} },
+  "size": 0,
+  "aggs": {
+    "events_over_time": {
+      "date_histogram": {
+        "field": "eventData.eventDateTime",
+        "calendar_interval": "1h",
+        "format": "yyyy-MM-dd HH:mm:ss"
       }
     }
   }
-});
-
-const buckets = response.body.aggregations.events_over_time.buckets;
+}
 ```
 
-### 4. Aggregate by Module Type
+### 5. Aggregate by Module Type
 
-```typescript
-const response = await client.search({
-  index: INDEX_NAME,
-  body: {
-    query: { match_all: {} },
-    size: 0,
-    aggs: {
-      by_module: {
-        terms: {
-          field: 'eventData.moduleId.keyword',
-          size: 20
-        },
-        aggs: {
-          by_status: {
-            terms: {
-              field: 'eventData.status.keyword',
-              size: 10
-            }
-          }
-        }
-      }
-    }
-  }
-});
-
-const modules = response.body.aggregations.by_module.buckets;
-```
-
-### 5. Get Latest Event per Source (Camera)
-
-```typescript
-const response = await client.search({
-  index: INDEX_NAME,
-  body: {
-    query: { match_all: {} },
-    size: 0,
-    aggs: {
-      by_source: {
-        terms: {
-          field: 'eventData.eventSourceId.keyword',
-          size: 50
-        },
-        aggs: {
-          latest_event: {
-            top_hits: {
-              size: 1,
-              sort: [{ 'eventData.eventDateTime': { order: 'desc' } }]
-            }
+```json
+{
+  "query": { "match_all": {} },
+  "size": 0,
+  "aggs": {
+    "by_module": {
+      "terms": {
+        "field": "eventData.moduleId.keyword",
+        "size": 20
+      },
+      "aggs": {
+        "by_status": {
+          "terms": {
+            "field": "eventData.status.keyword",
+            "size": 10
           }
         }
       }
     }
   }
-});
-
-const sources = response.body.aggregations.by_source.buckets;
+}
 ```
 
-### 6. Query Vehicle Events with License Plate Search
+### 6. Get Latest Event per Source (Camera)
 
-```typescript
-const response = await client.search({
-  index: INDEX_NAME,
-  body: {
-    query: {
-      bool: {
-        must: [
-          {
-            terms: {
-              'eventData.moduleId.keyword': [
-                'VH_LP_RECOGNITION',
-                'VH_MODEL_RECOGNITION',
-                'VH_CT_RECOGNITION'
-              ]
-            }
+```json
+{
+  "query": { "match_all": {} },
+  "size": 0,
+  "aggs": {
+    "by_source": {
+      "terms": {
+        "field": "eventData.eventSourceId.keyword",
+        "size": 50
+      },
+      "aggs": {
+        "latest_event": {
+          "top_hits": {
+            "size": 1,
+            "sort": [{ "eventData.eventDateTime": { "order": "desc" } }]
           }
-        ],
-        should: [
-          {
-            wildcard: {
-              'eventData.licensePlate.keyword': {
-                value: '*ABC*',
-                case_insensitive: true
-              }
-            }
-          }
-        ]
+        }
       }
-    },
-    sort: [{ 'eventData.eventDateTime': { order: 'desc' } }],
-    size: 20
+    }
   }
-});
+}
 ```
 
-### 7. Query Crowd Events with Size Filter
+### 7. Query Vehicle Events with License Plate Search
 
-```typescript
-const response = await client.search({
-  index: INDEX_NAME,
-  body: {
-    query: {
-      bool: {
-        must: [
-          { term: { 'eventData.moduleId.keyword': 'CROWD_COUNT' } },
-          { range: { 'eventData.count': { gte: 10, lte: 100 } } }
-        ]
-      }
-    },
-    sort: [{ 'eventData.eventDateTime': { order: 'desc' } }],
-    size: 20
-  }
-});
-```
-
-### 8. Track Person Across Cameras (Facial Recognition)
-
-```typescript
-const response = await client.search({
-  index: INDEX_NAME,
-  body: {
-    query: {
-      bool: {
-        must: [
-          { term: { 'eventData.moduleId.keyword': 'FACIAL_RECOGNITION' } },
-          { term: { 'eventData.personId.keyword': 'PERSON_123' } },
-          {
-            range: {
-              'eventData.eventDateTime': {
-                gte: '2026-02-18T08:00:00Z',
-                lte: '2026-02-18T12:00:00Z'
-              }
+```json
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "terms": {
+            "eventData.moduleId.keyword": [
+              "VH_LP_RECOGNITION",
+              "VH_MODEL_RECOGNITION",
+              "VH_CT_RECOGNITION"
+            ]
+          }
+        }
+      ],
+      "should": [
+        {
+          "wildcard": {
+            "eventData.licensePlate.keyword": {
+              "value": "*ABC*",
+              "case_insensitive": true
             }
           }
-        ]
-      }
-    },
-    sort: [{ 'eventData.eventDateTime': { order: 'asc' } }],
-    size: 100
-  }
-});
+        }
+      ]
+    }
+  },
+  "sort": [{ "eventData.eventDateTime": { "order": "desc" } }],
+  "size": 20
+}
+```
+
+### 8. Query Crowd Events with Size Filter
+
+```json
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "term": { "eventData.moduleId.keyword": "CROWD_COUNT" } },
+        { "range": { "eventData.count": { "gte": 10, "lte": 100 } } }
+      ]
+    }
+  },
+  "sort": [{ "eventData.eventDateTime": { "order": "desc" } }],
+  "size": 20
+}
+```
+
+### 9. Track Person Across Cameras (Facial Recognition)
+
+```json
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "term": { "eventData.moduleId.keyword": "FACIAL_RECOGNITION" } },
+        { "term": { "eventData.personId.keyword": "PERSON_123" } },
+        {
+          "range": {
+            "eventData.eventDateTime": {
+              "gte": "2026-02-18T08:00:00Z",
+              "lte": "2026-02-18T12:00:00Z"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "sort": [{ "eventData.eventDateTime": { "order": "asc" } }],
+  "size": 100
+}
 ```
 
 ## Query Building Helpers
 
-### Build bool query
+### Building Dynamic Queries
+
+When you need to build queries dynamically based on conditions, construct the query object step by step:
 
 ```typescript
-function buildBoolQuery(must = [], should = [], filter = [], mustNot = []) {
-  const bool: any = {};
-  if (must.length > 0) bool.must = must;
-  if (should.length > 0) bool.should = should;
-  if (filter.length > 0) bool.filter = filter;
-  if (mustNot.length > 0) bool.must_not = mustNot;
-  return { bool };
-}
-```
+// Example: Building a dynamic query for the MCP tool
+const must = [];
 
-### Multiple filters
-
-```typescript
-const filters = [];
-
-// Module filter
+// Add module filter if specified
 if (moduleId) {
-  filters.push({ term: { 'eventData.moduleId.keyword': moduleId } });
-}
-
-// Source filter (single or multiple)
-if (sourceIds) {
-  const sources = Array.isArray(sourceIds) ? sourceIds : [sourceIds];
-  if (sources.length === 1) {
-    filters.push({ term: { 'eventData.eventSourceId.keyword': sources[0] } });
+  const modules = Array.isArray(moduleId) ? moduleId : [moduleId];
+  if (modules.length === 1) {
+    must.push({ term: { 'eventData.moduleId.keyword': modules[0] } });
   } else {
-    filters.push({ terms: { 'eventData.eventSourceId.keyword': sources } });
+    must.push({ terms: { 'eventData.moduleId.keyword': modules } });
   }
 }
 
-// Date range
+// Add source filter if specified
+if (sourceIds) {
+  const sources = Array.isArray(sourceIds) ? sourceIds : [sourceIds];
+  if (sources.length === 1) {
+    must.push({ term: { 'eventData.eventSourceId.keyword': sources[0] } });
+  } else {
+    must.push({ terms: { 'eventData.eventSourceId.keyword': sources } });
+  }
+}
+
+// Add date range if specified
 if (dateRange) {
-  filters.push({
+  must.push({
     range: {
       'eventData.eventDateTime': {
         gte: dateRange.start,
@@ -501,38 +411,36 @@ if (dateRange) {
   });
 }
 
-// Status filter
+// Add status filter if specified
 if (status) {
-  filters.push({ term: { 'eventData.status.keyword': status } });
+  must.push({ term: { 'eventData.status.keyword': status } });
 }
 
-const query = buildBoolQuery(filters);
+// Build final query
+const query = must.length > 0 ? { bool: { must } } : { match_all: {} };
+
+// Use with MCP tool
+const queryBody = {
+  query,
+  sort: [{ 'eventData.eventDateTime': { order: 'desc' } }],
+  from: 0,
+  size: 10
+};
 ```
-
-## Best Practices
-
-1. **Always use keyword fields** for exact matches: `.keyword` suffix
-2. **Date ranges**: Use ISO 8601 format or Unix timestamps
-3. **Sort by event date**: Default to descending for recent events
-4. **Pagination**: Use `from` and `size` parameters
-5. **Aggregations**: Set `size: 0` when you only need aggregation results
-6. **Module filters**: Use `term` for single, `terms` for multiple
-7. **Wildcard searches**: Use for license plates, pattern matching
-8. **Error handling**: Always wrap in try-catch
 
 ## Performance Tips
 
-- Use `_source` filtering to return only needed fields
 - Set reasonable `size` limits (default 10, max 100)
-- Use aggregations instead of retrieving all documents
+- Use aggregations instead of retrieving all documents (set `size: 0` when only aggregations are needed)
 - Add time range filters to reduce search scope
+- Use `_source` filtering to return only needed fields: `"_source": ["eventData.eventId", "eventData.moduleId"]`
 - Use `top_hits` aggregation for latest-per-group queries
+- For term queries, always use `.keyword` suffix for exact matches
 
 ## Environment Variables
 
-**Configuration is stored in `.env` file in the project root.**
+Configuration is stored in `.env` file in the project root:
 
-Required variables:
 ```env
 OPENSEARCH_URL=http://localhost:9200
 OPENSEARCH_USER_NAME=admin
@@ -540,89 +448,84 @@ OPENSEARCH_PASSWORD=your_password_here
 INDEX_NAME=analytics-events
 ```
 
-The `.env` file is already configured in this project. Environment variables are automatically loaded when running scripts with `bun run`.
-
 ## Integration with o2vap.management
 
-This skill queries the same OpenSearch index that the Go backend writes to:
+This skill uses the MCP OpenSearch server (`mcp-server-opensearch`) which queries the same OpenSearch index that the Go backend writes to:
 - Backend service: `cmd/backend-apiserver/services/analytics_event_service.go`
 - Event DTOs: `cmd/backend-apiserver/dtos/opensearch_response_dto.go`
 - Repository: `cmd/backend-apiserver/repositories/analytics_event_repo.go`
+- MCP Server: `mcp-server-opensearch/src/index.ts`
 
-## Example: Complete Query Function
+## Complete Example
 
-```typescript
-async function searchAnalyticsEvents(options: {
-  moduleId?: string | string[];
-  eventSourceId?: string | string[];
-  taskId?: string;
-  status?: 'verified' | 'unverified';
-  dateRange?: { start: string; end: string };
-  from?: number;
-  size?: number;
-}) {
-  const must = [];
-  
-  if (options.moduleId) {
-    const modules = Array.isArray(options.moduleId) ? options.moduleId : [options.moduleId];
-    if (modules.length === 1) {
-      must.push({ term: { 'eventData.moduleId.keyword': modules[0] } });
-    } else {
-      must.push({ terms: { 'eventData.moduleId.keyword': modules } });
+### Example 1: Get Events for Source ID
+
+Call the MCP tool with:
+```json
+{
+  "query": {
+    "term": { "eventData.eventSourceId.keyword": "75" }
+  },
+  "sort": [{ "eventData.eventDateTime": { "order": "desc" } }],
+  "size": 100
+}
+```
+
+### Example 2: Get Crowd Events with Aggregations
+
+Call the MCP tool with:
+```json
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "term": { "eventData.moduleId.keyword": "CROWD_COUNT" } },
+        {
+          "range": {
+            "eventData.eventDateTime": {
+              "gte": "2026-02-18T00:00:00Z",
+              "lte": "2026-02-18T23:59:59Z"
+            }
+          }
+        }
+      ]
     }
-  }
-  
-  if (options.eventSourceId) {
-    const sources = Array.isArray(options.eventSourceId) ? options.eventSourceId : [options.eventSourceId];
-    if (sources.length === 1) {
-      must.push({ term: { 'eventData.eventSourceId.keyword': sources[0] } });
-    } else {
-      must.push({ terms: { 'eventData.eventSourceId.keyword': sources } });
-    }
-  }
-  
-  if (options.taskId) {
-    must.push({ term: { 'eventData.taskId.keyword': options.taskId } });
-  }
-  
-  if (options.status) {
-    must.push({ term: { 'eventData.status.keyword': options.status } });
-  }
-  
-  if (options.dateRange) {
-    must.push({
-      range: {
-        'eventData.eventDateTime': {
-          gte: options.dateRange.start,
-          lte: options.dateRange.end
+  },
+  "sort": [{ "eventData.eventDateTime": { "order": "desc" } }],
+  "size": 10,
+  "aggs": {
+    "by_source": {
+      "terms": {
+        "field": "eventData.eventSourceId.keyword",
+        "size": 10
+      },
+      "aggs": {
+        "latest_events": {
+          "top_hits": {
+            "size": 1,
+            "sort": [{ "eventData.eventDateTime": { "order": "desc" } }]
+          }
         }
       }
-    });
-  }
-  
-  const query = must.length > 0 ? { bool: { must } } : { match_all: {} };
-  
-  const response = await client.search({
-    index: INDEX_NAME,
-    body: {
-      query,
-      sort: [{ 'eventData.eventDateTime': { order: 'desc' } }],
-      from: options.from || 0,
-      size: options.size || 10
     }
-  });
-  
-  return {
-    total: response.body.hits.total.value,
-    events: response.body.hits.hits.map(hit => hit._source)
-  };
+  }
+}
+```
+
+Specify format if needed:
+```json
+{
+  "query": { "match_all": {} },
+  "size": 10,
+  "format": "dto"
 }
 ```
 
 ## Quick Reference
 
-**Search recent events**: `moduleId` + `dateRange` in bool query
-**Get by ID**: `term` query on `analyticsEventId`
+**Search recent events**: Use `bool` query with `moduleId` + `dateRange`
+**Get by source ID**: `term` query on `eventSourceId.keyword`
+**Get by event ID**: `term` query on `eventId.keyword`
 **Time trends**: `date_histogram` aggregation
 **Top sources**: `terms` aggregation on `eventSourceId` + `top_hits`
 **Module stats**: `terms` aggregation on `moduleId`
@@ -630,99 +533,57 @@ async function searchAnalyticsEvents(options: {
 **Person tracking**: `personId` + time range for facial events
 **Loitering**: `LOITERING` module + duration filter
 
-## Complete Example with Response Formatting
-
-```typescript
-import { Client } from '@opensearch-project/opensearch';
-import { formatOpensearchResponse } from './utils/response-formatter';
-
-const client = new Client({
-  node: process.env.OPENSEARCH_URL || 'http://localhost:9200',
-  auth: {
-    username: process.env.OPENSEARCH_USER_NAME || 'admin',
-    password: process.env.OPENSEARCH_PASSWORD,
-  },
-  ssl: {
-    rejectUnauthorized: false,
-  },
-});
-
-const INDEX_NAME = process.env.INDEX_NAME || 'analytics-events';
-
-async function getCrowdEventsWithFormatting() {
-  try {
-    const response = await client.search({
-      index: INDEX_NAME,
-      body: {
-        query: {
-          bool: {
-            must: [
-              { term: { 'eventData.moduleId.keyword': 'CROWD_COUNT' } },
-              {
-                range: {
-                  'eventData.eventDateTime': {
-                    gte: '2026-02-18T00:00:00Z',
-                    lte: '2026-02-18T23:59:59Z'
-                  }
-                }
-              }
-            ]
-          }
-        },
-        sort: [{ 'eventData.eventDateTime': { order: 'desc' } }],
-        size: 10,
-        aggs: {
-          by_source: {
-            terms: {
-              field: 'eventData.eventSourceId.keyword',
-              size: 10
-            },
-            aggs: {
-              latest_events: {
-                top_hits: {
-                  size: 1,
-                  sort: [{ 'eventData.eventDateTime': { order: 'desc' } }]
-                }
-              }
-            }
-          }
-        }
-      }
-    });
-
-    // Option 1: Return DTO format (includes full hit metadata and buckets)
-    const dtoResponse = formatOpensearchResponse(response.body, 'dto');
-    console.log('DTO Format:', JSON.stringify(dtoResponse, null, 2));
-    
-    // Option 2: Return Analytics format (cleaner for UI)
-    const analyticsResponse = formatOpensearchResponse(response.body, 'analytics');
-    console.log('Analytics Format:', JSON.stringify(analyticsResponse, null, 2));
-    
-    return analyticsResponse;
-  } catch (error) {
-    console.error('Error querying OpenSearch:', error);
-    throw error;
-  }
-}
-
-// Execute
-getCrowdEventsWithFormatting();
-```
-
-### Example Output - DTO Format
+## Example Output - Analytics Format
 
 ```json
 {
-  "totalValue": 42,
+  "Count": 2,
+  "AnalyticsEvents": [
+    {
+      "eventId": "b2c3d4e5-f6a7-4890-b123-c4d5e6f7a890",
+      "taskId": "e7abf7d3-73bf-4d62-9aa4-ebe369021ee9",
+      "serviceId": "aa3b5845-cb95-4adb-a2f5-a91e9f9e8321",
+      "moduleId": "CROWD_COUNT",
+      "eventSourceId": "75",
+      "eventSourceName": "Office LiveCam01",
+      "eventSourceType": "live_stream",
+      "eventDateTime": "2026-02-13T14:35:20.456+06:30",
+      "videoTime": 0,
+      "status": "UNVERIFIED",
+      "media": {
+        "url": "VAE_results/CROWD_COUNT/.../image.jpeg",
+        "type": "image",
+        "mimeType": "image/jpeg"
+      },
+      "eventData": [
+        {
+          "boundaryAreaIds": [],
+          "confidenceScore": 0.85,
+          "count": 38,
+          "isWithinArea": true
+        }
+      ],
+      "groupTag": "e7abf7d3-73bf-4d62-9aa4-ebe369021ee9_75_g1"
+    }
+  ],
+  "Aggregation": []
+}
+```
+
+## Example Output - DTO Format
+
+```json
+{
+  "totalValue": 2,
   "AggsResult": [
     {
-      "key": "camera-01",
-      "doc_count": 15,
+      "key": "75",
+      "doc_count": 2,
       "latest_events": {
         "hits": {
           "hits": [
             {
-              "_id": "event-123",
+              "_id": "abc123",
               "_index": "analytics-events",
               "_score": 1.0,
               "_source": {
@@ -730,15 +591,7 @@ getCrowdEventsWithFormatting();
                   "resultId": "result-123",
                   "alertId": "alert-456"
                 },
-                "eventData": {
-                  "eventId": "evt-123",
-                  "taskId": "task-001",
-                  "moduleId": "CROWD_COUNT",
-                  "eventSourceId": "camera-01",
-                  "eventDateTime": "2026-02-18T10:30:00Z",
-                  "status": "verified",
-                  "eventData": { "count": 25 }
-                }
+                "eventData": { /* ... */ }
               }
             }
           ]
@@ -747,34 +600,7 @@ getCrowdEventsWithFormatting();
     }
   ],
   "HitList": [
-    /* array of SingleHit objects */
-  ]
-}
-```
-
-### Example Output - Analytics Format
-
-```json
-{
-  "Count": 42,
-  "AnalyticsEvents": [
-    {
-      "eventId": "evt-123",
-      "taskId": "task-001",
-      "moduleId": "CROWD_COUNT",
-      "eventSourceId": "camera-01",
-      "eventDateTime": "2026-02-18T10:30:00Z",
-      "status": "verified",
-      "eventData": { "count": 25 },
-      "media": {
-        "url": "https://...",
-        "type": "image",
-        "mimeType": "image/jpeg"
-      }
-    }
-  ],
-  "Aggregation": [
-    /* Latest events from each bucket */
+    /* array of SingleHit objects with full metadata */
   ]
 }
 ```

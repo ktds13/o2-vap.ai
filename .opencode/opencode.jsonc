@@ -10,14 +10,17 @@
     },
   },
   "mcp": {
-     "playwright": {
+    "playwright": {
       "type": "local",
       "command": ["npx", "@playwright/mcp@latest"],
+    },
+    "opensearch-analytics": {
+      "type": "local",
+      "command": ["node", "mcp-server-opensearch/dist/index.js"]
     },
   },
   "tools": {
     "github-triage": false,
     "github-pr-search": false,
-    "opensearch-query": true,
   },
 }
