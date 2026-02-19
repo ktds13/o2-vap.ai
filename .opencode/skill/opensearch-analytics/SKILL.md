@@ -12,6 +12,32 @@ description: Query and analyze video analytics events from OpenSearch. Use this 
 - Getting latest events from cameras or tasks
 - Investigating event history or performance metrics
 
+## Available Tool
+
+This skill includes a static **opensearch-query** tool that executes OpenSearch queries directly. Use it when you need to run a query:
+
+```typescript
+// The tool automatically handles connection and formatting
+// Just provide the OpenSearch query DSL
+await tools.opensearchQuery({
+  query: {
+    query: { match_all: {} },
+    sort: [{ "eventData.eventDateTime": { order: "desc" } }],
+    size: 10
+  },
+  format: "analytics" // or "dto" or "raw"
+});
+```
+
+The tool accepts full OpenSearch Query DSL and returns formatted results. This is the preferred method for executing queries instead of writing custom scripts.
+
+**Tool Parameters:**
+- `query`: Full OpenSearch query DSL object
+- `index`: Target index name (defaults to `analytics-events`)
+- `format`: Response format - `analytics` (default), `dto`, or `raw`
+
+For complex or reusable queries, you can also write TypeScript scripts following the patterns below.
+
 ## OpenSearch Connection
 
 **IMPORTANT**: Always use environment variables from `.env` file for configuration.
