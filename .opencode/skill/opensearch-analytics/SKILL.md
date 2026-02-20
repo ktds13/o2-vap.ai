@@ -12,6 +12,68 @@ description: Query and analyze video analytics events from OpenSearch. Use this 
 - Getting latest events from cameras or tasks
 - Investigating event history or performance metrics
 
+## CRITICAL: Query Validation
+
+**BEFORE executing any OpenSearch query, you MUST validate that the user's prompt matches the OpenSearch index structure.**
+
+### Validation Rules
+
+1. **Check if the query terms match available fields** in the `eventData` or `metadata` structure (see Index Structure section below)
+2. **If the user asks about fields that DON'T exist** in the schema:
+   - **DO NOT execute the query**
+   - Inform the user that the requested field doesn't exist in the analytics events index
+   - Suggest similar or related fields that might help
+3. **If the query matches the structure**: Proceed with executing the query
+
+### Validation Examples
+
+**Example 1: Invalid Query (Field doesn't exist)**
+```
+User: "Get events where camera location is 'Building A'"
+Response: "The analytics-events index doesn't have a 'camera location' field. However, you can query by:
+- eventSourceId (camera ID)
+- eventSourceName (camera name)
+- location (geo-point coordinates)
+Would you like to search using one of these fields instead?"
+```
+
+**Example 2: Valid Query (Field exists)**
+```
+User: "Get last 3 events for source type is live_stream"
+Response: [Execute query using eventData.eventSourceType.keyword = "live_stream"]
+```
+
+**Example 3: Invalid Module Type**
+```
+User: "Show me events for INTRUSION_DETECTION module"
+Response: "The module 'INTRUSION_DETECTION' is not available in the analytics system. Available modules are:
+- CROWD_COUNT, CROWD_FLOW, LOITERING
+- FACIAL_RECOGNITION, PERSON_RE_ID
+- VH_LP_RECOGNITION, VH_MODEL_RECOGNITION, VH_CT_RECOGNITION
+- UNATTENDED
+Would you like to query one of these modules instead?"
+```
+
+**Example 4: Ambiguous Terms**
+```
+User: "Get events with high confidence"
+Response: "The term 'confidence' can refer to different fields depending on the module:
+- For crowd events: eventData.eventData.confidenceScore
+- For general events: eventData.confidence
+- For face/vehicle detection: confidence scores in eventData.eventData
+Could you specify which module or event type you're interested in, and what threshold you consider 'high'?"
+```
+
+### Validation Process
+
+Before executing a query:
+1. Parse the user's request to identify requested fields/filters
+2. Check if those fields exist in the Index Structure (sections below)
+3. Validate any module IDs against the available Analytics Modules list
+4. Validate any field values (e.g., status must be 'verified' or 'unverified')
+5. If validation fails: Explain why and suggest alternatives
+6. If validation passes: Construct and execute the OpenSearch query
+
 ## How to Query
 
 Use the `execute_opensearch_query` MCP tool to query analytics events from OpenSearch. This tool accepts OpenSearch Query DSL and returns formatted results.
@@ -85,7 +147,154 @@ INDEX_NAME=analytics-events
 | `VH_CT_RECOGNITION` | Vehicle color/type recognition |
 | `FACIAL_RECOGNITION` | Face recognition and matching |
 
-## Event Structure
+## Index Structure
+
+The `analytics-events` index has the following structure in OpenSearch:
+
+### Top-Level Properties
+
+```json
+{
+  "eventData": { /* Main event data - see below */ },
+  "metadata": { /* Event metadata - see below */ }
+}
+```
+
+### eventData Structure
+
+```typescript
+interface EventData {
+  // Core Event Fields
+  analyticsEventID: string;          // Keyword type
+  analyticsTaskID: string;           // Keyword type
+  eventId: string;                   // Text with keyword subfield
+  taskId: string;                    // Text with keyword subfield
+  serviceId: string;                 // Text with keyword subfield
+  moduleId: string;                  // Text with keyword subfield
+  
+  // Source Information
+  eventSourceId: string;             // Text with keyword subfield
+  eventSourceName: string;           // Text with keyword subfield
+  eventSourceType: string;           // Text with keyword subfield
+  
+  // Temporal Data
+  eventDateTime: Date;               // Date type
+  videoTime: number;                 // Long type
+  
+  // Status & Verification
+  status: 'verified' | 'unverified'; // Keyword type
+  verifiedBy?: string;               // Keyword type
+  verifiedDateTime?: Date;           // Date type
+  verifiedDescription?: string;      // Text type
+  
+  // Categorization
+  tags?: string[];                   // Keyword array
+  groupTag?: string;                 // Text with keyword subfield
+  
+  // Bounding Box
+  bbox?: object;                     // Generic object type
+  confidence?: number;               // Float type
+  
+  // Location
+  location?: {                       // Geo-point type
+    lat: number;
+    lon: number;
+  };
+  
+  // Media
+  media?: {
+    url?: string;                    // Text with keyword subfield
+    type?: string;                   // Text with keyword subfield
+    mimeType?: string;               // Text with keyword subfield
+    imageUrl?: string;               // Text type
+    videoUrl?: string;               // Text type
+    thumbnailUrl?: string;           // Text type
+  };
+  
+  // Module-Specific Event Data (dynamic)
+  eventData?: {
+    // Facial Recognition
+    faceId?: string;                 // Text with keyword subfield
+    faceBox?: {
+      type?: string;                 // Text with keyword subfield
+      points?: number[];             // Float array
+    };
+    queryId?: string;                // Text with keyword subfield
+    
+    // Crowd Analytics
+    count?: number;                  // Long type
+    ingress?: number;                // Long type
+    egress?: number;                 // Long type
+    confidenceScore?: number;        // Float type
+    boundaryAreaIds?: string[];      // Text with keyword subfield
+    isWithinArea?: boolean;          // Boolean type
+    
+    // Person Re-ID
+    personId?: string;               // Text with keyword subfield
+    personBox?: {
+      type?: string;                 // Text with keyword subfield
+      points?: number[];             // Float array
+    };
+    
+    // Loitering
+    loiteringDuration?: number;      // Long type
+    
+    // Vehicle Analytics
+    vehicleId?: string;              // Text with keyword subfield
+    vehicleBox?: {
+      type?: string;                 // Text with keyword subfield
+      points?: number[];             // Float array
+    };
+    vehicleType?: string;            // Text with keyword subfield
+    vehicleColour?: string;          // Text with keyword subfield
+    vehicleMake?: string;            // Text with keyword subfield
+    vehicleModel?: string;           // Text with keyword subfield
+    
+    // License Plate Recognition
+    licensePlateId?: string;         // Text with keyword subfield
+    licensePlateNumber?: string;     // Text with keyword subfield
+    licensePlateBox?: {
+      type?: string;                 // Text with keyword subfield
+      points?: number[];             // Float array
+    };
+  };
+}
+```
+
+### metadata Structure
+
+```typescript
+interface Metadata {
+  resultId: string;                  // Text with keyword subfield
+  alertId: string;                   // Text with keyword subfield
+  timestamp: Date;                   // Date type
+  version: string;                   // Keyword type
+}
+```
+
+### Field Type Notes
+
+1. **Text vs Keyword**:
+   - `text` fields: Full-text searchable, analyzed
+   - `text` fields with `.keyword` subfield: Can do both full-text and exact match
+   - `keyword` fields: Exact match only, used for filtering, sorting, aggregations
+
+2. **Dynamic Fields**:
+   - `eventData.eventData` is marked as `dynamic: true`, allowing arbitrary fields
+   - This enables module-specific data without predefined schema
+
+3. **Array Fields**:
+   - `tags`: Array of keyword strings
+   - Box `points`: Array of float numbers for polygon coordinates
+   - `boundaryAreaIds`: Array of text strings with keyword subfield
+
+4. **Geo-point**:
+   - `location` field supports geo-spatial queries
+   - Format: `{ "lat": 23.8103, "lon": 90.4125 }`
+
+## Event Structure (Flattened)
+
+When working with events in the application layer, the structure is flattened:
 
 ```typescript
 interface AnalyticsEvent {
